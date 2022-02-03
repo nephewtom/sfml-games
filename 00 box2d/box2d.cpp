@@ -8,23 +8,85 @@ const int W = 800;
 const int H = 600;
 
 const float PPM = 32.0f;
+
+b2Vec2 gravity(0.0f, 0.3f);
+b2World world(gravity);
+
+using namespace sf;
+
 struct Body
 {
     float width, height;
-    Body(float w, float h) {
-        width = w;
-        height = h;
-    }
+    float xinit, yinit;
+
     b2BodyDef def;
     b2PolygonShape shape;
     b2FixtureDef fixture;
     b2Body* body;
     sf::RectangleShape sfShape;
-};
-b2Vec2 gravity(0.0f, 0.3f);
-b2World world(gravity);
 
-using namespace sf;
+    Body(float w, float h, float xc, float yc, Color color) {
+        width = w; height = h;
+        xinit = xc; yinit = yc;
+
+        def.position.Set(xinit / PPM, yinit / PPM);
+
+        shape.SetAsBox(1.05f * width * .5f / PPM, height * .5f / PPM);
+        fixture.shape = &shape;
+
+        sfShape.setSize(Vector2f(width, height));
+        sfShape.setOrigin(width * .5f, height * .5f);
+        sfShape.setFillColor(color);
+        sfShape.setPosition(xinit, yinit);
+    }
+
+    virtual void build() {
+        body = world.CreateBody(&def);
+        body->CreateFixture(&fixture);
+    }
+};
+
+struct DynamicBody : Body {
+
+    float density, friction;
+
+    DynamicBody(float w, float h, float xc, float yc, float d, float f, Color color) :
+        Body(w, h, xc, yc, color)
+    {
+        density = d; friction = f;
+        def.type = b2_dynamicBody;
+        def.angle = rand() % 360 * DEGTORAD;
+
+        shape.SetAsBox(width * .5f / PPM, height * .5f / PPM);
+
+        fixture.density = density;
+        fixture.friction = friction;
+    }
+
+    void build() {
+        Body::build();
+        sfShape.setRotation(body->GetAngle() * RADTODEG);
+    }
+
+    void update() {
+        if (body->GetPosition().x > W / PPM)
+            body->SetTransform(b2Vec2(0.0f, body->GetPosition().y), body->GetAngle());
+        if (body->GetPosition().x < 0) 
+            body->SetTransform(b2Vec2(W / PPM, body->GetPosition().y), body->GetAngle());
+
+        sfShape.setRotation(body->GetAngle() * RADTODEG);
+        sfShape.setPosition(body->GetPosition().x * PPM, body->GetPosition().y * PPM);
+    }
+
+    void recreate() {
+        body->DestroyFixture(body->GetFixtureList());
+        world.DestroyBody(body);
+        def.position.Set(xinit / PPM, yinit / PPM);
+        def.angle = rand() % 360 * DEGTORAD;
+        body = world.CreateBody(&def);
+        body->CreateFixture(&fixture);
+    }
+};
 
 class Grid {
 public:
@@ -65,64 +127,18 @@ public:
 
 int main() {
     srand(time(0));
-    RenderWindow app(VideoMode(W, H, 32), "Box2D", Style::Titlebar);
+    RenderWindow app(VideoMode(W, H, 32), "Box2D sample", Style::Titlebar);
 
     Grid grid;
 
-    // ground - static body
-    float gX = 400.0f, gY = 580.0f;
-    b2BodyDef groundDef;
-    groundDef.position.Set(gX / PPM, gY / PPM);
-    b2Body* groundBox = world.CreateBody(&groundDef);
+    float wallWidth = 10.0f;
+    Body leftWall(wallWidth, H/1.3f, 0.0f+wallWidth*.5f, H/2, Color::White); leftWall.build();
+    Body rightWall(wallWidth, H/1.3f, W-wallWidth*.5f, H/2, Color::White); rightWall.build();
+    Body ground(W, wallWidth, W/2, H-wallWidth*.5f, Color::White); ground.build();
 
-    float gW = 600.0f, gH = 25.0f;
-    b2PolygonShape groundShape;
-    groundShape.SetAsBox(1.05f * gW * 0.5f / PPM, gH * 0.5f / PPM);
-    b2FixtureDef groundFixture;
-    groundFixture.shape = &groundShape;
-    groundBox->CreateFixture(&groundShape, 0.0f);
-
-    RectangleShape sfGroundShape(Vector2f(gW, gH));
-    sfGroundShape.setOrigin(gW / 2.0f, gH / 2.0f);
-    sfGroundShape.setFillColor(Color::Blue);
-    sfGroundShape.setPosition(gX, gY);
-
-
-    // dynamic body
-    b2BodyDef boxDef;
-    boxDef.type = b2_dynamicBody;
-    boxDef.position.Set(300.0f / PPM, 0.0f / PPM);
-    boxDef.angle = rand() % 360 * DEGTORAD;
-    b2Body* boxBody = world.CreateBody(&boxDef);
-
-    b2PolygonShape boxShape;
-    boxShape.SetAsBox(10.0f / PPM, 10.0f / PPM);
-    b2FixtureDef fixtureDef;
-    fixtureDef.shape = &boxShape;
-    fixtureDef.density = 0.3f;
-    fixtureDef.friction = 0.5f;
-    boxBody->CreateFixture(&fixtureDef);
-
-    RectangleShape sfBoxShape(Vector2f(20, 20));
-    sfBoxShape.setOrigin(10, 10);
-    sfBoxShape.setFillColor(Color::Green);
-    sfBoxShape.setRotation(boxBody->GetAngle() * RADTODEG);
-
-
-    Body oBox(40.0f, 40.0f);
-    oBox.def.type = b2_dynamicBody;
-    oBox.def.position.Set(500.0f / PPM, 0.0f / PPM);
-    oBox.def.angle = rand() % 360 * DEGTORAD;
-    oBox.body = world.CreateBody(&oBox.def);
-    oBox.shape.SetAsBox(oBox.width * .5f / PPM, oBox.height * .5f / PPM);
-    oBox.fixture.shape = &oBox.shape;
-    oBox.fixture.density = 1.0f;
-    oBox.fixture.friction = 0.1f;
-    oBox.body->CreateFixture(&oBox.fixture);
-    oBox.sfShape.setSize(Vector2f(oBox.width, oBox.height));
-    oBox.sfShape.setOrigin(oBox.width * .5f, oBox.height * .5f);
-    oBox.sfShape.setFillColor(Color::Red);
-    oBox.sfShape.setRotation(oBox.body->GetAngle() * RADTODEG);
+    DynamicBody myBox(20.0f, 20.0f, 300.0f, 0.0f, 0.3f, 0.5f, Color::Green); myBox.build();
+    DynamicBody oBox(40.0f, 40.0f, 500.0f, 0.0f, 1.0f, 0.1f, Color::Red); oBox.build();
+    DynamicBody pBox(40.0f, 40.0f, 200.0f, 0.0f, 1.0f, 0.1f, Color::Blue); pBox.build();
 
 
     //text stuff to appear on the page
@@ -143,10 +159,9 @@ int main() {
     clearInstructions.setPosition(25, 50);
     jumpInstructions.setPosition(25, 70);
 
-    float timeStep = 1 / 180.0f;
+    float timeStep = 1 / 130.0f;
     int32 velocityIterations = 6;
     int32 positionIterations = 2;
-    bool keyPressed = false;
     int jumpCount = 0;
 
     while (app.isOpen())
@@ -163,27 +178,13 @@ int main() {
 
                 if (e.key.code == Keyboard::W) {
                     if (jumpCount < 2) {
-                        boxBody->SetLinearVelocity(b2Vec2(boxBody->GetLinearVelocity().x, -1.35f));
+                        myBox.body->SetLinearVelocity(b2Vec2(myBox.body->GetLinearVelocity().x, -1.35f));
                         jumpCount++;
                     }
                 }
 
                 if (e.key.code == Keyboard::R) {
-                    boxBody->DestroyFixture(boxBody->GetFixtureList());
-                    world.DestroyBody(boxBody);
-                    boxDef.position.Set(400.0f / PPM, 0.0f / PPM);
-                    boxBody = world.CreateBody(&boxDef);
-                    boxDef.angle = rand() % 360 * DEGTORAD;
-                    boxBody->CreateFixture(&fixtureDef);
-
-
-                    oBox.body->DestroyFixture(oBox.body->GetFixtureList());
-                    world.DestroyBody(oBox.body);
-                    oBox.def.position.Set(500.0f / PPM, 0.0f / PPM);
-                    oBox.def.angle = rand() % 360 * DEGTORAD;
-                    oBox.body = world.CreateBody(&oBox.def);
-                    oBox.body->CreateFixture(&oBox.fixture);
-
+                    myBox.recreate();
                 }
 
                 if (e.key.code == Keyboard::Escape)
@@ -195,7 +196,6 @@ int main() {
             }
             if (e.type == Event::KeyReleased) {
                 if (e.key.code == Keyboard::W) {
-                    //keyPressed = false;
                 }
             }
 
@@ -210,51 +210,42 @@ int main() {
             }
         }
         if (Keyboard::isKeyPressed(sf::Keyboard::A)) {
-            boxBody->SetLinearVelocity(b2Vec2(-0.3f, boxBody->GetLinearVelocity().y));
+            myBox.body->SetLinearVelocity(b2Vec2(-0.3f, myBox.body->GetLinearVelocity().y));
+            myBox.body->SetAngularVelocity(-20 * DEGTORAD);
+
             if (jumpCount != 0) {
-                boxBody->SetAngularVelocity(-45 * DEGTORAD);
+                //myBox.body->SetAngularVelocity(-45 * DEGTORAD);
             }
-            else if (boxBody->GetLinearVelocity().x != 0.0f) {
-                boxBody->SetAngularVelocity(-20 * DEGTORAD);
-            }
-            else {
-                boxBody->SetAngularVelocity(0);
-            }
-
-
-
         }
         if (Keyboard::isKeyPressed(sf::Keyboard::D)) {
-            boxBody->SetLinearVelocity(b2Vec2(0.3f, boxBody->GetLinearVelocity().y));
+            myBox.body->SetLinearVelocity(b2Vec2(0.3f, myBox.body->GetLinearVelocity().y));
+            myBox.body->SetAngularVelocity(20 * DEGTORAD);
+
             if (jumpCount != 0) {
-                boxBody->SetAngularVelocity(45 * DEGTORAD);
+                //myBox.body->SetAngularVelocity(45 * DEGTORAD);
             }
-            else if (boxBody->GetLinearVelocity().x != 0.0f) {
-                boxBody->SetAngularVelocity(20 * DEGTORAD);
-            }
-            else {
-                boxBody->SetAngularVelocity(0);
-            }
-
-
         }
-        if (boxBody->GetLinearVelocity().y == 0.0f) {
+        if (myBox.body->GetLinearVelocity().y == 0.0f) {
             jumpCount = 0;
         }
 
-        sfBoxShape.setRotation(boxBody->GetAngle() * RADTODEG);
-        sfBoxShape.setPosition(boxBody->GetPosition().x * PPM, boxBody->GetPosition().y * PPM);
-        oBox.sfShape.setRotation(oBox.body->GetAngle() * RADTODEG);
-        oBox.sfShape.setPosition(oBox.body->GetPosition().x * PPM, oBox.body->GetPosition().y * PPM);
+        myBox.update();
+        oBox.update();
+        pBox.update();
+
 
         app.clear();
 
         app.draw(text);
         app.draw(clearInstructions);
         app.draw(jumpInstructions);
-        app.draw(sfGroundShape);
+
+        app.draw(leftWall.sfShape);
+        app.draw(rightWall.sfShape);
+        app.draw(ground.sfShape);
         app.draw(oBox.sfShape);
-        app.draw(sfBoxShape);
+        app.draw(pBox.sfShape);
+        app.draw(myBox.sfShape);
 
         grid.draw(app);
 
