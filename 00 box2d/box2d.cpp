@@ -1,3 +1,7 @@
+#include "imgui.h" // necessary for ImGui::*, imgui-SFML.h doesn't include imgui.h
+#include "imgui-SFML.h" // for ImGui::SFML::* functions and SFML-specific overloads
+
+
 #include <Box2D/Box2D.h>
 #include <SFML/Graphics.hpp>
 
@@ -66,6 +70,7 @@ public:
 int main() {
     srand(time(0));
     RenderWindow app(VideoMode(W, H, 32), "Box2D", Style::Titlebar);
+    ImGui::SFML::Init(app);
 
     Grid grid;
 
@@ -149,12 +154,16 @@ int main() {
     bool keyPressed = false;
     int jumpCount = 0;
 
+    sf::Clock deltaClock;
+
     while (app.isOpen())
     {
         world.Step(timeStep, velocityIterations, positionIterations);
 
         Event e;
         while (app.pollEvent(e)) {
+
+            ImGui::SFML::ProcessEvent(app, e);
 
             if (e.type == Event::Closed)
                 app.close();
@@ -235,12 +244,18 @@ int main() {
             else {
                 boxBody->SetAngularVelocity(0);
             }
-
-
         }
+
         if (boxBody->GetLinearVelocity().y == 0.0f) {
             jumpCount = 0;
         }
+
+        ImGui::SFML::Update(app, deltaClock.restart());
+
+        ImGui::Begin("Hello, world!");
+        ImGui::Button("Look at this pretty button");
+        ImGui::End();        
+
 
         sfBoxShape.setRotation(boxBody->GetAngle() * RADTODEG);
         sfBoxShape.setPosition(boxBody->GetPosition().x * PPM, boxBody->GetPosition().y * PPM);
@@ -257,9 +272,10 @@ int main() {
         app.draw(sfBoxShape);
 
         grid.draw(app);
-
+        ImGui::SFML::Render(app);
         app.display();
     }
 
+    ImGui::SFML::Shutdown();
     return 0;
 }

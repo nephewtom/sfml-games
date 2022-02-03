@@ -5,7 +5,9 @@
             "includePath": [
                 "${workspaceFolder}/**",
                 "${workspaceFolder}/../sfml/include",
-                "${workspaceFolder}/../box2d/include"
+                "${workspaceFolder}/../box2d/include",
+                "${workspaceFolder}/../imgui",
+                "${workspaceFolder}/../imgui-sfml"
             ],
             "defines": [
                 "_DEBUG",
