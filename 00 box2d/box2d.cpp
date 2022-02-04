@@ -8,27 +8,128 @@
 #define DEGTORAD 0.0174532925199432957f
 #define RADTODEG 57.295779513082320876f
 
-const int W = 800;
-const int H = 600;
+const int W = 1024;
+const int H = 768;
 
 const float PPM = 32.0f;
+
+b2Vec2 gravity(0.0f, 0.3f);
+b2World world(gravity);
+
+using namespace sf;
+
 struct Body
 {
+    const char* name;
     float width, height;
-    Body(float w, float h) {
-        width = w;
-        height = h;
-    }
+    float xinit, yinit;
+
     b2BodyDef def;
     b2PolygonShape shape;
     b2FixtureDef fixture;
     b2Body* body;
     sf::RectangleShape sfShape;
-};
-b2Vec2 gravity(0.0f, 0.3f);
-b2World world(gravity);
 
-using namespace sf;
+    Body(const char* n, float w, float h, float xc, float yc, Color color) {
+        name = n;
+        width = w; height = h;
+        xinit = xc; yinit = yc;
+
+        def.userData.pointer = reinterpret_cast<uintptr_t>(this);
+        def.position.Set(xinit / PPM, yinit / PPM);
+        shape.SetAsBox(1.05f * width * .5f / PPM, height * .5f / PPM);
+        fixture.shape = &shape;
+
+        sfShape.setSize(Vector2f(width, height));
+        sfShape.setOrigin(width * .5f, height * .5f);
+        sfShape.setFillColor(color);
+        sfShape.setPosition(xinit, yinit);
+    }
+
+    virtual void build() {
+        body = world.CreateBody(&def);
+        body->CreateFixture(&fixture);
+    }
+};
+
+struct DynamicBody : Body {
+
+    float density, friction;
+
+    DynamicBody(const char* name, float w, float h, float xc, float yc, float d, float f, Color color) :
+        Body(name, w, h, xc, yc, color)
+    {
+        density = d; friction = f;
+        def.type = b2_dynamicBody;
+        def.angle = rand() % 360 * DEGTORAD;
+
+        shape.SetAsBox(width * .5f / PPM, height * .5f / PPM);
+
+        fixture.density = density;
+        fixture.friction = friction;
+    }
+
+    void build() {
+        Body::build();
+        sfShape.setRotation(body->GetAngle() * RADTODEG);
+    }
+
+    void update() {
+        if (body->GetPosition().x > W / PPM)
+            body->SetTransform(b2Vec2(0.0f, body->GetPosition().y), body->GetAngle());
+        if (body->GetPosition().x < 0)
+            body->SetTransform(b2Vec2(W / PPM, body->GetPosition().y), body->GetAngle());
+
+        sfShape.setRotation(body->GetAngle() * RADTODEG);
+        sfShape.setPosition(body->GetPosition().x * PPM, body->GetPosition().y * PPM);
+    }
+
+    void recreate() {
+        body->DestroyFixture(body->GetFixtureList());
+        world.DestroyBody(body);
+        def.position.Set(xinit / PPM, yinit / PPM);
+        def.angle = rand() % 360 * DEGTORAD;
+        body = world.CreateBody(&def);
+        body->CreateFixture(&fixture);
+    }
+};
+
+class MyContactListener : public b2ContactListener
+{
+    void BeginContact(b2Contact* contact) {
+
+        Body* exit = 0;
+        Body* player = 0;
+        b2BodyUserData data = contact->GetFixtureA()->GetBody()->GetUserData();
+        if (data.pointer != 0) {
+            Body* b = (Body*)data.pointer;
+            if (strcmp(b->name, "player") == 0) {
+                player = b;
+            }
+            else if (strcmp(b->name, "exit") == 0){
+                exit = b;
+            }
+        }
+
+        data = contact->GetFixtureB()->GetBody()->GetUserData();
+        if (data.pointer != 0) {
+            Body* b = (Body*)data.pointer;
+            if (strcmp(b->name, "player") == 0) {
+                player = b;
+            }
+            else if (strcmp(b->name, "exit") == 0){
+                exit = b;
+            }
+        }
+        if (exit && player) {
+            exit->sfShape.setFillColor(Color::Black);
+        }
+    }
+
+    void EndContact(b2Contact* contact) {
+
+    }
+};
 
 class Grid {
 public:
@@ -71,63 +172,26 @@ int main() {
     srand(time(0));
     RenderWindow app(VideoMode(W, H, 32), "Box2D", Style::Titlebar);
     ImGui::SFML::Init(app);
-
     Grid grid;
 
-    // ground - static body
-    float gX = 400.0f, gY = 580.0f;
-    b2BodyDef groundDef;
-    groundDef.position.Set(gX / PPM, gY / PPM);
-    b2Body* groundBox = world.CreateBody(&groundDef);
+    MyContactListener myContactListener;
+    world.SetContactListener(&myContactListener);
 
-    float gW = 600.0f, gH = 25.0f;
-    b2PolygonShape groundShape;
-    groundShape.SetAsBox(1.05f * gW * 0.5f / PPM, gH * 0.5f / PPM);
-    b2FixtureDef groundFixture;
-    groundFixture.shape = &groundShape;
-    groundBox->CreateFixture(&groundShape, 0.0f);
-
-    RectangleShape sfGroundShape(Vector2f(gW, gH));
-    sfGroundShape.setOrigin(gW / 2.0f, gH / 2.0f);
-    sfGroundShape.setFillColor(Color::Blue);
-    sfGroundShape.setPosition(gX, gY);
+    float wallWidth = W / 80;
+    Body leftWall("lw", wallWidth, H / 1.3f, 0.0f + wallWidth * .5f, H / 2, Color::White); leftWall.build();
+    Body rightWall("rw", wallWidth, H / 1.3f, W - wallWidth * .5f, H / 2, Color::White); rightWall.build();
+    Body ground("ground", W, wallWidth, W / 2, H - wallWidth * .5f, Color::White); ground.build();
+    Body platform1("p1", W / 10, wallWidth, 2 * W / 10, 9 * H / 10, Color::White); platform1.build();
+    Body platform2("p2", W / 10, wallWidth, 4 * W / 10, 8 * H / 10, Color::White); platform2.build();
+    Body platform3("p3", W / 10, wallWidth, 6 * W / 10, 7 * H / 10, Color::White); platform3.build();
+    //    Body exit(W/30, W/20, 6*W/10, 6.5*H/10, Color::Green); exit.build();
+    Body exit("exit", W / 30, W / 20, W / 3, 9.4 * H / 10, Color::Green); exit.build();
 
 
-    // dynamic body
-    b2BodyDef boxDef;
-    boxDef.type = b2_dynamicBody;
-    boxDef.position.Set(300.0f / PPM, 0.0f / PPM);
-    boxDef.angle = rand() % 360 * DEGTORAD;
-    b2Body* boxBody = world.CreateBody(&boxDef);
 
-    b2PolygonShape boxShape;
-    boxShape.SetAsBox(10.0f / PPM, 10.0f / PPM);
-    b2FixtureDef fixtureDef;
-    fixtureDef.shape = &boxShape;
-    fixtureDef.density = 0.3f;
-    fixtureDef.friction = 0.5f;
-    boxBody->CreateFixture(&fixtureDef);
-
-    RectangleShape sfBoxShape(Vector2f(20, 20));
-    sfBoxShape.setOrigin(10, 10);
-    sfBoxShape.setFillColor(Color::Green);
-    sfBoxShape.setRotation(boxBody->GetAngle() * RADTODEG);
-
-
-    Body oBox(40.0f, 40.0f);
-    oBox.def.type = b2_dynamicBody;
-    oBox.def.position.Set(500.0f / PPM, 0.0f / PPM);
-    oBox.def.angle = rand() % 360 * DEGTORAD;
-    oBox.body = world.CreateBody(&oBox.def);
-    oBox.shape.SetAsBox(oBox.width * .5f / PPM, oBox.height * .5f / PPM);
-    oBox.fixture.shape = &oBox.shape;
-    oBox.fixture.density = 1.0f;
-    oBox.fixture.friction = 0.1f;
-    oBox.body->CreateFixture(&oBox.fixture);
-    oBox.sfShape.setSize(Vector2f(oBox.width, oBox.height));
-    oBox.sfShape.setOrigin(oBox.width * .5f, oBox.height * .5f);
-    oBox.sfShape.setFillColor(Color::Red);
-    oBox.sfShape.setRotation(oBox.body->GetAngle() * RADTODEG);
+    DynamicBody player("player", W / 40, W / 40, W / 10, 0.0f, 0.3f, 0.5f, Color::Green); player.build();
+    DynamicBody redBox("redBox", W / 20, W / 20, W / 4, 0.0f, 1.0f, 0.1f, Color::Red); redBox.build();
+    DynamicBody blueBox("blueBox", W / 20, W / 20, 3 * W / 4, 0.0f, 5.0f, 5.0f, Color::Blue); blueBox.build();
 
 
     //text stuff to appear on the page
@@ -148,13 +212,13 @@ int main() {
     clearInstructions.setPosition(25, 50);
     jumpInstructions.setPosition(25, 70);
 
-    float timeStep = 1 / 180.0f;
+    float timeStep = 1 / 130.0f;
     int32 velocityIterations = 6;
     int32 positionIterations = 2;
-    bool keyPressed = false;
     int jumpCount = 0;
 
     sf::Clock deltaClock;
+    bool show_imgui_demo = true;
 
     while (app.isOpen())
     {
@@ -172,27 +236,13 @@ int main() {
 
                 if (e.key.code == Keyboard::W) {
                     if (jumpCount < 2) {
-                        boxBody->SetLinearVelocity(b2Vec2(boxBody->GetLinearVelocity().x, -1.35f));
+                        player.body->SetLinearVelocity(b2Vec2(player.body->GetLinearVelocity().x, -1.35f));
                         jumpCount++;
                     }
                 }
 
                 if (e.key.code == Keyboard::R) {
-                    boxBody->DestroyFixture(boxBody->GetFixtureList());
-                    world.DestroyBody(boxBody);
-                    boxDef.position.Set(400.0f / PPM, 0.0f / PPM);
-                    boxBody = world.CreateBody(&boxDef);
-                    boxDef.angle = rand() % 360 * DEGTORAD;
-                    boxBody->CreateFixture(&fixtureDef);
-
-
-                    oBox.body->DestroyFixture(oBox.body->GetFixtureList());
-                    world.DestroyBody(oBox.body);
-                    oBox.def.position.Set(500.0f / PPM, 0.0f / PPM);
-                    oBox.def.angle = rand() % 360 * DEGTORAD;
-                    oBox.body = world.CreateBody(&oBox.def);
-                    oBox.body->CreateFixture(&oBox.fixture);
-
+                    player.recreate();
                 }
 
                 if (e.key.code == Keyboard::Escape)
@@ -204,7 +254,6 @@ int main() {
             }
             if (e.type == Event::KeyReleased) {
                 if (e.key.code == Keyboard::W) {
-                    //keyPressed = false;
                 }
             }
 
@@ -217,64 +266,80 @@ int main() {
                 int id = e.joystickConnect.joystickId;
                 //players[id]->joystick(id);
             }
-        }
+        } // pollEvent
+
         if (Keyboard::isKeyPressed(sf::Keyboard::A)) {
-            boxBody->SetLinearVelocity(b2Vec2(-0.3f, boxBody->GetLinearVelocity().y));
+            player.body->SetLinearVelocity(b2Vec2(-0.3f, player.body->GetLinearVelocity().y));
+            player.body->SetAngularVelocity(-20 * DEGTORAD);
+
             if (jumpCount != 0) {
-                boxBody->SetAngularVelocity(-45 * DEGTORAD);
+                //myBox.body->SetAngularVelocity(-45 * DEGTORAD);
             }
-            else if (boxBody->GetLinearVelocity().x != 0.0f) {
-                boxBody->SetAngularVelocity(-20 * DEGTORAD);
-            }
-            else {
-                boxBody->SetAngularVelocity(0);
-            }
-
-
-
         }
         if (Keyboard::isKeyPressed(sf::Keyboard::D)) {
-            boxBody->SetLinearVelocity(b2Vec2(0.3f, boxBody->GetLinearVelocity().y));
+            player.body->SetLinearVelocity(b2Vec2(0.3f, player.body->GetLinearVelocity().y));
+            player.body->SetAngularVelocity(20 * DEGTORAD);
+
             if (jumpCount != 0) {
-                boxBody->SetAngularVelocity(45 * DEGTORAD);
-            }
-            else if (boxBody->GetLinearVelocity().x != 0.0f) {
-                boxBody->SetAngularVelocity(20 * DEGTORAD);
-            }
-            else {
-                boxBody->SetAngularVelocity(0);
+                //myBox.body->SetAngularVelocity(45 * DEGTORAD);
             }
         }
 
-        if (boxBody->GetLinearVelocity().y == 0.0f) {
+        if (abs(player.body->GetLinearVelocity().y * PPM) == 0.0f &&
+            abs(player.body->GetAngularVelocity() * PPM) == 0.0f) {
             jumpCount = 0;
         }
 
         ImGui::SFML::Update(app, deltaClock.restart());
 
-        ImGui::Begin("Hello, world!");
-        ImGui::Button("Look at this pretty button");
-        ImGui::End();        
+        if (show_imgui_demo)
+            ImGui::ShowDemoWindow(&show_imgui_demo);
+        {
+            ImGui::Begin("myBox");
+            float f1 = 0.0f;
+            //ImGui::SliderFloat("slider float", &f1, 0.0f, 1.0f, "ratio = %.3f");
+            b2Vec2 lv = player.body->GetLinearVelocity();
+            float av = player.body->GetAngularVelocity();
 
+            ImGui::LabelText("LinearVelocity", "(%.3f, %.3f)", PPM * lv.x, PPM * lv.y);
+            ImGui::LabelText("AngularVelocity", "%.3f", PPM * av);
+            Body* b = (Body*)player.def.userData.pointer;
+            ImGui::LabelText("jumpCount", "%s %i", b->name, jumpCount);
+            //ImGui::SliderFloat("LinearVelocity", &myBox.body->GetLinearVelocity().x, -1.0f, 1.0f, "ratio = %.3f");        
 
-        sfBoxShape.setRotation(boxBody->GetAngle() * RADTODEG);
-        sfBoxShape.setPosition(boxBody->GetPosition().x * PPM, boxBody->GetPosition().y * PPM);
-        oBox.sfShape.setRotation(oBox.body->GetAngle() * RADTODEG);
-        oBox.sfShape.setPosition(oBox.body->GetPosition().x * PPM, oBox.body->GetPosition().y * PPM);
+            //ImGui::SliderFloat2("LinearVelocity", myBox.body->GetLinearVelocity(), -1.0, 1.0);        
+            ImGui::Button("Look at this pretty button");
+            ImGui::End();
+        }
+
+        player.update();
+        redBox.update();
+        blueBox.update();
+
 
         app.clear();
 
         app.draw(text);
         app.draw(clearInstructions);
         app.draw(jumpInstructions);
-        app.draw(sfGroundShape);
-        app.draw(oBox.sfShape);
-        app.draw(sfBoxShape);
+
+        app.draw(leftWall.sfShape);
+        app.draw(rightWall.sfShape);
+        app.draw(ground.sfShape);
+        app.draw(platform1.sfShape);
+        app.draw(platform2.sfShape);
+        app.draw(platform3.sfShape);
+        app.draw(exit.sfShape);
+
+        app.draw(redBox.sfShape);
+        app.draw(blueBox.sfShape);
+        app.draw(player.sfShape);
 
         grid.draw(app);
         ImGui::SFML::Render(app);
         app.display();
-    }
+
+    } //app.isOpen()
 
     ImGui::SFML::Shutdown();
     return 0;

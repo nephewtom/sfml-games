@@ -1,0 +1,9 @@
+[submodule "box2d"]
+	path = box2d
+	url = https://github.com/erincatto/box2d
+[submodule "imgui"]
+	path = imgui
+	url = https://github.com/ocornut/imgui
+[submodule "imgui-sfml"]
+	path = imgui-sfml
+	url = https://github.com/eliasdaler/imgui-sfml
