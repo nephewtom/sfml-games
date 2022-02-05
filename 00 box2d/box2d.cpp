@@ -15,10 +15,11 @@ const float PPM = 32.0f;
 
 b2Vec2 gravity(0.0f, 0.3f);
 b2World world(gravity);
+bool paused = false;
 
 using namespace sf;
 
-struct Body
+struct Entity
 {
     const char* name;
     float width, height;
@@ -28,9 +29,10 @@ struct Body
     b2PolygonShape shape;
     b2FixtureDef fixture;
     b2Body* body;
+
     sf::RectangleShape sfShape;
 
-    Body(const char* n, float w, float h, float xc, float yc, Color color) {
+    Entity(const char* n, float w, float h, float xc, float yc, Color color) {
         name = n;
         width = w; height = h;
         xinit = xc; yinit = yc;
@@ -38,6 +40,7 @@ struct Body
         def.userData.pointer = reinterpret_cast<uintptr_t>(this);
         def.position.Set(xinit / PPM, yinit / PPM);
         shape.SetAsBox(1.05f * width * .5f / PPM, height * .5f / PPM);
+        // 1.05 factor because testing platforms showed it was needed
         fixture.shape = &shape;
 
         sfShape.setSize(Vector2f(width, height));
@@ -50,14 +53,32 @@ struct Body
         body = world.CreateBody(&def);
         body->CreateFixture(&fixture);
     }
+
+    Entity* next;
 };
 
-struct DynamicBody : Body {
+struct EntityList {
+    Entity* head;
+    Entity* tail;
+    EntityList& add(Entity* node) {
+        if (head == 0) {
+            head = tail = node;
+        }
+        else {
+            tail->next = node;
+            node->next = 0;
+            tail = node;
+        }
+        return *this;
+    }
+};
+
+struct DynamicEntity : Entity {
 
     float density, friction;
 
-    DynamicBody(const char* name, float w, float h, float xc, float yc, float d, float f, Color color) :
-        Body(name, w, h, xc, yc, color)
+    DynamicEntity(const char* name, float w, float h, float xc, float yc, float d, float f, Color color) :
+        Entity(name, w, h, xc, yc, color)
     {
         density = d; friction = f;
         def.type = b2_dynamicBody;
@@ -70,12 +91,12 @@ struct DynamicBody : Body {
     }
 
     void build() {
-        Body::build();
+        Entity::build();
         sfShape.setRotation(body->GetAngle() * RADTODEG);
     }
 
     void update() {
-        if (body->GetPosition().x > W / PPM)
+        if (body->GetPosition().x >= W / PPM)
             body->SetTransform(b2Vec2(0.0f, body->GetPosition().y), body->GetAngle());
         if (body->GetPosition().x < 0)
             body->SetTransform(b2Vec2(W / PPM, body->GetPosition().y), body->GetAngle());
@@ -98,26 +119,26 @@ class MyContactListener : public b2ContactListener
 {
     void BeginContact(b2Contact* contact) {
 
-        Body* exit = 0;
-        Body* player = 0;
+        Entity* exit = 0;
+        Entity* player = 0;
         b2BodyUserData data = contact->GetFixtureA()->GetBody()->GetUserData();
         if (data.pointer != 0) {
-            Body* b = (Body*)data.pointer;
+            Entity* b = (Entity*)data.pointer;
             if (strcmp(b->name, "player") == 0) {
                 player = b;
             }
-            else if (strcmp(b->name, "exit") == 0){
+            else if (strcmp(b->name, "exit") == 0) {
                 exit = b;
             }
         }
 
         data = contact->GetFixtureB()->GetBody()->GetUserData();
         if (data.pointer != 0) {
-            Body* b = (Body*)data.pointer;
+            Entity* b = (Entity*)data.pointer;
             if (strcmp(b->name, "player") == 0) {
                 player = b;
             }
-            else if (strcmp(b->name, "exit") == 0){
+            else if (strcmp(b->name, "exit") == 0) {
                 exit = b;
             }
         }
@@ -168,6 +189,82 @@ public:
     }
 };
 
+struct Player {
+
+    DynamicEntity entity;
+    b2Body* body;
+
+    bool jumpButtomPressed, jumpButtomReleased;
+    bool jumping;
+    int jumpCount = 0;
+    float posY, prevPosY;
+
+    Player() : entity("player", W / 40, W / 40, W / 10, 0.0f, 0.3f, 0.5f, Color::Green) {
+        entity.build();
+        body = entity.body;
+    }
+    void keyboardJump() {
+        if (jumpCount < 2) {
+            body->SetLinearVelocity(b2Vec2(body->GetLinearVelocity().x, -1.35f));
+            jumpCount++;
+        }
+    }
+    void moveRight() {
+        body->SetLinearVelocity(b2Vec2(0.3f, body->GetLinearVelocity().y));
+        //body->SetAngularVelocity(20 * DEGTORAD);
+
+    }
+    void moveLeft() {
+        body->SetLinearVelocity(b2Vec2(-0.3f, body->GetLinearVelocity().y));
+        //body->SetAngularVelocity(-20 * DEGTORAD);
+    }
+
+    void update() {
+
+        if (jx > 40) moveRight();
+        if (jx < -40) moveLeft();
+
+        posY = body->GetPosition().y * PPM;
+
+        float lv = round(PPM * body->GetLinearVelocity().y * 1000.0) / 1000.0;
+        if (lv == 0.0f && abs(posY - prevPosY) == 0.0f)
+            jumpCount = 0; jumping = false;
+
+        prevPosY = body->GetPosition().y * PPM;
+        entity.update();
+    }
+
+    void recreate() {
+        entity.recreate();
+    }
+
+    const Joystick::Axis padAxisX = static_cast<Joystick::Axis>(0);
+    const Joystick::Axis padAxisY = static_cast<Joystick::Axis>(1);
+    const int padButtonA = 0;
+    int jx, jy;
+
+    void joystick(int id) {
+
+        jx = Joystick::getAxisPosition(id, padAxisX);
+        jy = Joystick::getAxisPosition(id, padAxisY);
+
+        if (Joystick::isButtonPressed(id, padButtonA)) {
+
+            if (jumpButtomReleased) {
+                if (jumpCount < 2) {
+                    body->SetLinearVelocity(b2Vec2(body->GetLinearVelocity().x, -1.35f));
+                    jumping = true; jumpCount++;
+                    jumpButtomReleased = false;
+                }
+            }
+
+        }
+        else if (!Joystick::isButtonPressed(id, padButtonA)) {
+            jumpButtomReleased = true;
+        }
+    }
+};
+
 int main() {
     srand(time(0));
     RenderWindow app(VideoMode(W, H, 32), "Box2D", Style::Titlebar);
@@ -178,44 +275,51 @@ int main() {
     world.SetContactListener(&myContactListener);
 
     float wallWidth = W / 80;
-    Body leftWall("lw", wallWidth, H / 1.3f, 0.0f + wallWidth * .5f, H / 2, Color::White); leftWall.build();
-    Body rightWall("rw", wallWidth, H / 1.3f, W - wallWidth * .5f, H / 2, Color::White); rightWall.build();
-    Body ground("ground", W, wallWidth, W / 2, H - wallWidth * .5f, Color::White); ground.build();
-    Body platform1("p1", W / 10, wallWidth, 2 * W / 10, 9 * H / 10, Color::White); platform1.build();
-    Body platform2("p2", W / 10, wallWidth, 4 * W / 10, 8 * H / 10, Color::White); platform2.build();
-    Body platform3("p3", W / 10, wallWidth, 6 * W / 10, 7 * H / 10, Color::White); platform3.build();
-    //    Body exit(W/30, W/20, 6*W/10, 6.5*H/10, Color::Green); exit.build();
-    Body exit("exit", W / 30, W / 20, W / 3, 9.4 * H / 10, Color::Green); exit.build();
+    Entity leftWall("lw", wallWidth, H / 1.3f, 0.0f + wallWidth * .5f, H / 2, Color::White); leftWall.build();
+    Entity rightWall("rw", wallWidth, H / 1.3f, W - wallWidth * .5f, H / 2, Color::White); rightWall.build();
+    Entity ground("ground", W, wallWidth, W / 2, H - wallWidth * .5f, Color::White); ground.build();
+    Entity p1("p1", W / 10, wallWidth, 2 * W / 10, 9 * H / 10, Color::White); p1.build();
+    Entity p2("p2", W / 10, wallWidth, 4 * W / 10, 8 * H / 10, Color::White); p2.build();
+    Entity p3("p3", W / 10, wallWidth, 6 * W / 10, 7 * H / 10, Color::White); p3.build();
+    Entity exit("exit", W / 30, W / 20, W / 3, 9.4 * H / 10, Color::Green); exit.build();
 
+    Player player;
+    DynamicEntity redBox("redBox", W / 20, W / 20, W / 4, 0.0f, 1.0f, 0.1f, Color::Red); redBox.build();
+    DynamicEntity blueBox("blueBox", W / 20, W / 20, 3 * W / 4, 0.0f, 5.0f, 5.0f, Color::Blue); blueBox.build();
 
+    EntityList entityList;
+    entityList.add(&leftWall).add(&rightWall).add(&ground).add(&p1).add(&p2).add(&p3).add(&exit);
+    entityList.add(&redBox).add(&blueBox).add(&player.entity);
 
-    DynamicBody player("player", W / 40, W / 40, W / 10, 0.0f, 0.3f, 0.5f, Color::Green); player.build();
-    DynamicBody redBox("redBox", W / 20, W / 20, W / 4, 0.0f, 1.0f, 0.1f, Color::Red); redBox.build();
-    DynamicBody blueBox("blueBox", W / 20, W / 20, 3 * W / 4, 0.0f, 5.0f, 5.0f, Color::Blue); blueBox.build();
+    for (Entity* e = entityList.head; e != 0; e = e->next) {
 
+        printf("e:%s | ", e->name);
+    }
 
     //text stuff to appear on the page
     Font myFont;
     if (!myFont.loadFromFile("sansation.ttf")) { return 1; }
 
-    Text text("FPS", myFont);
-    text.setCharacterSize(20);
-    text.setColor(Color(0, 255, 255, 255));
-    text.setPosition(25, 25);
+    Text pausedText("PAUSED", myFont);
+    pausedText.setCharacterSize(20);
+    pausedText.setColor(Color::Red);
+    pausedText.setPosition(25, 25);
 
-    Text clearInstructions("Press [Escape] to exit", myFont);
-    Text jumpInstructions("[WASD] to move square", myFont);
-    clearInstructions.setCharacterSize(18);
-    jumpInstructions.setCharacterSize(18);
-    clearInstructions.setColor(Color(200, 55, 100, 255));
-    jumpInstructions.setColor(Color(200, 55, 100, 255));
-    clearInstructions.setPosition(25, 50);
-    jumpInstructions.setPosition(25, 70);
+    Text exitInstructions("[Escape] to exit", myFont);
+    Text moveInstructions("[WASD] to move square", myFont);
+    exitInstructions.setCharacterSize(18);
+    moveInstructions.setCharacterSize(18);
+    exitInstructions.setColor(Color::Blue);
+    moveInstructions.setColor(Color::Blue);
+    exitInstructions.setPosition(25, 50);
+    moveInstructions.setPosition(25, 70);
 
-    float timeStep = 1 / 130.0f;
+    float freq = 130.0f;
+    float oneStepFreq = 2000.0f;
+
+    float timeStep = 1 / freq;
     int32 velocityIterations = 6;
     int32 positionIterations = 2;
-    int jumpCount = 0;
 
     sf::Clock deltaClock;
     bool show_imgui_demo = true;
@@ -235,10 +339,7 @@ int main() {
             if (e.type == Event::KeyPressed) {
 
                 if (e.key.code == Keyboard::W) {
-                    if (jumpCount < 2) {
-                        player.body->SetLinearVelocity(b2Vec2(player.body->GetLinearVelocity().x, -1.35f));
-                        jumpCount++;
-                    }
+                    player.keyboardJump();
                 }
 
                 if (e.key.code == Keyboard::R) {
@@ -251,9 +352,29 @@ int main() {
                 if (e.key.code == Keyboard::G)
                     grid.isVisible = !grid.isVisible;
 
+                if (e.key.code == Keyboard::P) {
+                    paused = !paused;
+                    timeStep = paused ? 0.0f : 1 / freq;
+                }
+
+                if (e.key.code == Keyboard::O) {
+                    timeStep = 1 / oneStepFreq;
+                    paused = false;
+                }
+                if (e.key.code == Keyboard::Comma) {
+                    freq -= 30;
+                    timeStep = 1 / freq;
+                }
+                if (e.key.code == Keyboard::Period) {
+                    timeStep = 1 / freq;
+                    freq += 30;
+                }
+
             }
             if (e.type == Event::KeyReleased) {
-                if (e.key.code == Keyboard::W) {
+                if (e.key.code == Keyboard::O) {
+                    paused = true;
+                    timeStep = 0.0f;
                 }
             }
 
@@ -264,31 +385,17 @@ int main() {
 
                 // Update displayed joystick values
                 int id = e.joystickConnect.joystickId;
-                //players[id]->joystick(id);
+                player.joystick(id);
             }
         } // pollEvent
 
         if (Keyboard::isKeyPressed(sf::Keyboard::A)) {
-            player.body->SetLinearVelocity(b2Vec2(-0.3f, player.body->GetLinearVelocity().y));
-            player.body->SetAngularVelocity(-20 * DEGTORAD);
-
-            if (jumpCount != 0) {
-                //myBox.body->SetAngularVelocity(-45 * DEGTORAD);
-            }
+            player.moveLeft();
         }
         if (Keyboard::isKeyPressed(sf::Keyboard::D)) {
-            player.body->SetLinearVelocity(b2Vec2(0.3f, player.body->GetLinearVelocity().y));
-            player.body->SetAngularVelocity(20 * DEGTORAD);
-
-            if (jumpCount != 0) {
-                //myBox.body->SetAngularVelocity(45 * DEGTORAD);
-            }
+            player.moveRight();
         }
 
-        if (abs(player.body->GetLinearVelocity().y * PPM) == 0.0f &&
-            abs(player.body->GetAngularVelocity() * PPM) == 0.0f) {
-            jumpCount = 0;
-        }
 
         ImGui::SFML::Update(app, deltaClock.restart());
 
@@ -297,43 +404,44 @@ int main() {
         {
             ImGui::Begin("myBox");
             float f1 = 0.0f;
-            //ImGui::SliderFloat("slider float", &f1, 0.0f, 1.0f, "ratio = %.3f");
+
+            //ImGui::LabelText("timeStep", "%.6f %.f", timeStep);
+            ImGui::SliderFloat("timeStep freq", &freq, 100.0f, 4000.0f, "%f");
+            ImGui::SliderFloat("oneStep freq", &oneStepFreq, 2000.0f, 4000.0f, "%f");
+
+            ImGui::LabelText("posY - prevPosy", "%.6f %.6f", player.posY, player.prevPosY);
+
+            b2Vec2 pos = player.body->GetPosition();
+            ImGui::LabelText("Position", "(%f, %f)", PPM * pos.x, PPM * pos.y);
+
             b2Vec2 lv = player.body->GetLinearVelocity();
+            ImGui::LabelText("LinearVelocity", "(%f, %f)", PPM * lv.x, PPM * lv.y);
             float av = player.body->GetAngularVelocity();
+            ImGui::LabelText("AngularVelocity", "%f", PPM * av);
 
-            ImGui::LabelText("LinearVelocity", "(%.3f, %.3f)", PPM * lv.x, PPM * lv.y);
-            ImGui::LabelText("AngularVelocity", "%.3f", PPM * av);
-            Body* b = (Body*)player.def.userData.pointer;
-            ImGui::LabelText("jumpCount", "%s %i", b->name, jumpCount);
-            //ImGui::SliderFloat("LinearVelocity", &myBox.body->GetLinearVelocity().x, -1.0f, 1.0f, "ratio = %.3f");        
+            ImGui::LabelText("jumpCount", "%i", player.jumpCount);
 
-            //ImGui::SliderFloat2("LinearVelocity", myBox.body->GetLinearVelocity(), -1.0, 1.0);        
-            ImGui::Button("Look at this pretty button");
             ImGui::End();
         }
 
         player.update();
+
         redBox.update();
         blueBox.update();
 
 
         app.clear();
 
-        app.draw(text);
-        app.draw(clearInstructions);
-        app.draw(jumpInstructions);
+        if (paused) {
+            app.draw(pausedText);
+        }
 
-        app.draw(leftWall.sfShape);
-        app.draw(rightWall.sfShape);
-        app.draw(ground.sfShape);
-        app.draw(platform1.sfShape);
-        app.draw(platform2.sfShape);
-        app.draw(platform3.sfShape);
-        app.draw(exit.sfShape);
+        app.draw(exitInstructions);
+        app.draw(moveInstructions);
 
-        app.draw(redBox.sfShape);
-        app.draw(blueBox.sfShape);
-        app.draw(player.sfShape);
+        for (Entity* e = entityList.head; e != 0; e = e->next) {
+            app.draw(e->sfShape);
+        }
 
         grid.draw(app);
         ImGui::SFML::Render(app);
