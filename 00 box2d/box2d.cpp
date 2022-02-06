@@ -58,6 +58,7 @@ struct Entity
 };
 
 struct EntityList {
+
     Entity* head;
     Entity* tail;
     EntityList& add(Entity* node) {
@@ -66,10 +67,16 @@ struct EntityList {
         }
         else {
             tail->next = node;
-            node->next = 0;
             tail = node;
         }
+        node->next = 0;
         return *this;
+    }
+
+    void draw(RenderWindow& window) {
+        for (Entity* e = head; e != 0; e = e->next) {
+            window.draw(e->sfShape);
+        }
     }
 };
 
@@ -189,6 +196,42 @@ public:
     }
 };
 
+struct MyText {
+    MyText(Text* t) { text = t ;}
+    Text* text;
+    MyText* next;
+};
+
+struct HelpTexts {
+    Font& font;
+    MyText* head;
+    MyText* tail;
+    HelpTexts(Font& myFont) : font(myFont) { }
+
+    HelpTexts& add(const char* s, float x, float y, float size = 18.0f, Color color = Color::Blue) {
+        Text* t = new Text(s, font, size);
+        t->setPosition(x, y);
+        t->setColor(color);
+
+        MyText* myText = new MyText(t);
+        if (head == 0) {
+            head = tail = myText;
+        }
+        else {
+            tail->next = myText;
+            tail = myText;
+        }
+        myText->next = 0;
+
+        return *this;
+    }
+    void draw(RenderWindow& window) {
+        for (MyText* t = head; t != 0; t = t->next) {
+            window.draw(*t->text);
+        }
+    }    
+};
+
 struct Player {
 
     DynamicEntity entity;
@@ -205,17 +248,20 @@ struct Player {
     }
     void keyboardJump() {
         if (jumpCount < 2) {
-            body->SetLinearVelocity(b2Vec2(body->GetLinearVelocity().x, -1.35f));
+            b2Vec2 vel = body->GetLinearVelocity(); vel.y = -1.35;
+            body->SetLinearVelocity(vel);
             jumpCount++;
         }
     }
     void moveRight() {
-        body->SetLinearVelocity(b2Vec2(0.3f, body->GetLinearVelocity().y));
+        b2Vec2 vel = body->GetLinearVelocity(); vel.x = 0.3f;
+        body->SetLinearVelocity(vel);
         //body->SetAngularVelocity(20 * DEGTORAD);
 
     }
     void moveLeft() {
-        body->SetLinearVelocity(b2Vec2(-0.3f, body->GetLinearVelocity().y));
+        b2Vec2 vel = body->GetLinearVelocity(); vel.x = -0.3f;
+        body->SetLinearVelocity(vel);
         //body->SetAngularVelocity(-20 * DEGTORAD);
     }
 
@@ -224,13 +270,13 @@ struct Player {
         if (jx > 40) moveRight();
         if (jx < -40) moveLeft();
 
-        posY = body->GetPosition().y * PPM;
+        posY = body->GetPosition().y;//* PPM;
 
         float lv = round(PPM * body->GetLinearVelocity().y * 1000.0) / 1000.0;
         if (lv == 0.0f && abs(posY - prevPosY) == 0.0f)
             jumpCount = 0; jumping = false;
 
-        prevPosY = body->GetPosition().y * PPM;
+        prevPosY = body->GetPosition().y;// * PPM;
         entity.update();
     }
 
@@ -291,28 +337,20 @@ int main() {
     entityList.add(&leftWall).add(&rightWall).add(&ground).add(&p1).add(&p2).add(&p3).add(&exit);
     entityList.add(&redBox).add(&blueBox).add(&player.entity);
 
-    for (Entity* e = entityList.head; e != 0; e = e->next) {
-
-        printf("e:%s | ", e->name);
-    }
+    // for (Entity* e = entityList.head; e != 0; e = e->next) {
+    //     printf("e:%s | ", e->name);
+    // }
 
     //text stuff to appear on the page
     Font myFont;
     if (!myFont.loadFromFile("sansation.ttf")) { return 1; }
+    HelpTexts helpTexts(myFont);
+    helpTexts.add("[Escape] to exit", W/32, H/24);
+    helpTexts.add("[WASD] to move square", W/32, 2*H/24);
+    helpTexts.add("[P] - Pause   [O] - Single step", W/32, 3*H/24);
 
-    Text pausedText("PAUSED", myFont);
-    pausedText.setCharacterSize(20);
-    pausedText.setColor(Color::Red);
-    pausedText.setPosition(25, 25);
-
-    Text exitInstructions("[Escape] to exit", myFont);
-    Text moveInstructions("[WASD] to move square", myFont);
-    exitInstructions.setCharacterSize(18);
-    moveInstructions.setCharacterSize(18);
-    exitInstructions.setColor(Color::Blue);
-    moveInstructions.setColor(Color::Blue);
-    exitInstructions.setPosition(25, 50);
-    moveInstructions.setPosition(25, 70);
+    HelpTexts pausedText(myFont);
+    pausedText.add("PAUSED", W/2, H/2, 30, Color::Red);
 
     float freq = 130.0f;
     float oneStepFreq = 2000.0f;
@@ -409,7 +447,7 @@ int main() {
             ImGui::SliderFloat("timeStep freq", &freq, 100.0f, 4000.0f, "%f");
             ImGui::SliderFloat("oneStep freq", &oneStepFreq, 2000.0f, 4000.0f, "%f");
 
-            ImGui::LabelText("posY - prevPosy", "%.6f %.6f", player.posY, player.prevPosY);
+            ImGui::LabelText("posY - prevPosy", "%.10f %.10f", player.posY, player.prevPosY);
 
             b2Vec2 pos = player.body->GetPosition();
             ImGui::LabelText("Position", "(%f, %f)", PPM * pos.x, PPM * pos.y);
@@ -425,23 +463,16 @@ int main() {
         }
 
         player.update();
-
         redBox.update();
         blueBox.update();
-
 
         app.clear();
 
         if (paused) {
-            app.draw(pausedText);
+            pausedText.draw(app);
         }
-
-        app.draw(exitInstructions);
-        app.draw(moveInstructions);
-
-        for (Entity* e = entityList.head; e != 0; e = e->next) {
-            app.draw(e->sfShape);
-        }
+        helpTexts.draw(app);
+        entityList.draw(app);
 
         grid.draw(app);
         ImGui::SFML::Render(app);
