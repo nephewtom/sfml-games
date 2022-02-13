@@ -27,21 +27,22 @@ struct Entity
 
     b2BodyDef def;
     b2PolygonShape shape;
-    b2FixtureDef fixture;
+    b2FixtureDef fixtureDef;
     b2Body* body;
 
-    sf::RectangleShape sfShape;
+    RectangleShape sfShape;
 
-    Entity(const char* n, float w, float h, float xc, float yc, Color color) {
-        name = n;
-        width = w; height = h;
-        xinit = xc; yinit = yc;
+    Entity(const char* _name, float _width, float _height, float _xinit, float _yinit, Color color) {
+        name = _name;
+        width = _width; height = _height;
+        xinit = _xinit; yinit = _yinit;
 
         def.userData.pointer = reinterpret_cast<uintptr_t>(this);
         def.position.Set(xinit / PPM, yinit / PPM);
-        shape.SetAsBox(1.05f * width * .5f / PPM, height * .5f / PPM);
+        shape.SetAsBox(width * .5f / PPM, height * .5f / PPM);
+        //shape.SetAsBox(1.05f * width * .5f / PPM, height * .5f / PPM);
         // 1.05 factor because testing platforms showed it was needed
-        fixture.shape = &shape;
+        fixtureDef.shape = &shape;
 
         sfShape.setSize(Vector2f(width, height));
         sfShape.setOrigin(width * .5f, height * .5f);
@@ -49,9 +50,10 @@ struct Entity
         sfShape.setPosition(xinit, yinit);
     }
 
+
     virtual void build() {
         body = world.CreateBody(&def);
-        body->CreateFixture(&fixture);
+        body->CreateFixture(&fixtureDef);
     }
 
     Entity* next;
@@ -84,17 +86,18 @@ struct DynamicEntity : Entity {
 
     float density, friction;
 
-    DynamicEntity(const char* name, float w, float h, float xc, float yc, float d, float f, Color color) :
-        Entity(name, w, h, xc, yc, color)
+    DynamicEntity(const char* _name, float _width, float _height, float _xinit, float _yinit,
+                  float _density, float _friction, Color color) :
+        Entity(_name, _width, _height, _xinit, _yinit, color)
     {
-        density = d; friction = f;
+        density = _density; friction = _friction;
         def.type = b2_dynamicBody;
         def.angle = rand() % 360 * DEGTORAD;
 
         shape.SetAsBox(width * .5f / PPM, height * .5f / PPM);
 
-        fixture.density = density;
-        fixture.friction = friction;
+        fixtureDef.density = density;
+        fixtureDef.friction = friction;
     }
 
     void build() {
@@ -118,44 +121,7 @@ struct DynamicEntity : Entity {
         def.position.Set(xinit / PPM, yinit / PPM);
         def.angle = rand() % 360 * DEGTORAD;
         body = world.CreateBody(&def);
-        body->CreateFixture(&fixture);
-    }
-};
-
-class MyContactListener : public b2ContactListener
-{
-    void BeginContact(b2Contact* contact) {
-
-        Entity* exit = 0;
-        Entity* player = 0;
-        b2BodyUserData data = contact->GetFixtureA()->GetBody()->GetUserData();
-        if (data.pointer != 0) {
-            Entity* b = (Entity*)data.pointer;
-            if (strcmp(b->name, "player") == 0) {
-                player = b;
-            }
-            else if (strcmp(b->name, "exit") == 0) {
-                exit = b;
-            }
-        }
-
-        data = contact->GetFixtureB()->GetBody()->GetUserData();
-        if (data.pointer != 0) {
-            Entity* b = (Entity*)data.pointer;
-            if (strcmp(b->name, "player") == 0) {
-                player = b;
-            }
-            else if (strcmp(b->name, "exit") == 0) {
-                exit = b;
-            }
-        }
-        if (exit && player) {
-            exit->sfShape.setFillColor(Color::Black);
-        }
-    }
-
-    void EndContact(b2Contact* contact) {
-
+        body->CreateFixture(&fixtureDef);
     }
 };
 
@@ -197,7 +163,7 @@ public:
 };
 
 struct MyText {
-    MyText(Text* t) { text = t ;}
+    MyText(Text* t) { text = t; }
     Text* text;
     MyText* next;
 };
@@ -229,40 +195,57 @@ struct HelpTexts {
         for (MyText* t = head; t != 0; t = t->next) {
             window.draw(*t->text);
         }
-    }    
+    }
 };
 
-struct Player {
+struct Player : public b2ContactListener{
 
     DynamicEntity entity;
     b2Body* body;
+    RectangleShape foot;
 
     bool jumpButtomPressed, jumpButtomReleased;
-    bool jumping;
     int jumpCount = 0;
-    float posY, prevPosY;
 
-    Player() : entity("player", W / 40, W / 40, W / 10, 0.0f, 0.3f, 0.5f, Color::Green) {
+    Player() : entity("player", W / 40, W / 40, W / 10, 0.0f, 0.3f, 0.3f, Color::Green) {
+        
+        //entity.fixtureDef.friction = 0.0f;
+        entity.fixtureDef.restitution = 0.3f;
+
         entity.build();
         body = entity.body;
+        
+        // // Foot Sensor
+        // float footWidth = entity.width * .5f;
+        // float footHeight = entity.height * .5f;
+        // entity.shape.SetAsBox(footWidth*.5f / PPM, footHeight*.5f / PPM, b2Vec2(0, -footHeight/PPM), 0);
+        // entity.fixtureDef.isSensor = true;
+        // entity.fixtureDef.userData.pointer = reinterpret_cast<uintptr_t>(this);
+        // b2Fixture* footSensor = body->CreateFixture(&entity.fixtureDef);
+
+        // foot.setSize(Vector2f(footWidth, footHeight));
+        // foot.setOrigin(footWidth/2, footHeight);
+        // foot.setFillColor(Color::Red);
+        // foot.setPosition(entity.xinit, entity.yinit);
     }
     void keyboardJump() {
         if (jumpCount < 2) {
             b2Vec2 vel = body->GetLinearVelocity(); vel.y = -1.35;
             body->SetLinearVelocity(vel);
             jumpCount++;
+            entity.fixtureDef.friction = 0.0f;
         }
     }
     void moveRight() {
         b2Vec2 vel = body->GetLinearVelocity(); vel.x = 0.3f;
         body->SetLinearVelocity(vel);
-        //body->SetAngularVelocity(20 * DEGTORAD);
+        body->SetAngularVelocity(20 * DEGTORAD);
 
     }
     void moveLeft() {
         b2Vec2 vel = body->GetLinearVelocity(); vel.x = -0.3f;
         body->SetLinearVelocity(vel);
-        //body->SetAngularVelocity(-20 * DEGTORAD);
+        body->SetAngularVelocity(-20 * DEGTORAD);
     }
 
     void update() {
@@ -270,14 +253,14 @@ struct Player {
         if (jx > 40) moveRight();
         if (jx < -40) moveLeft();
 
-        posY = body->GetPosition().y;//* PPM;
-
-        float lv = round(PPM * body->GetLinearVelocity().y * 1000.0) / 1000.0;
-        if (lv == 0.0f && abs(posY - prevPosY) == 0.0f)
-            jumpCount = 0; jumping = false;
-
-        prevPosY = body->GetPosition().y;// * PPM;
         entity.update();
+
+        //foot.setRotation(body->GetAngle() * RADTODEG);
+        //foot.setPosition(body->GetPosition().x * PPM, body->GetPosition().y * PPM);        
+    }
+
+    void draw(RenderWindow& window) {
+        window.draw(foot);
     }
 
     void recreate() {
@@ -296,10 +279,12 @@ struct Player {
 
         if (Joystick::isButtonPressed(id, padButtonA)) {
 
+            entity.fixtureDef.friction = 0.3f;
+
             if (jumpButtomReleased) {
                 if (jumpCount < 2) {
                     body->SetLinearVelocity(b2Vec2(body->GetLinearVelocity().x, -1.35f));
-                    jumping = true; jumpCount++;
+                    jumpCount++;
                     jumpButtomReleased = false;
                 }
             }
@@ -309,6 +294,77 @@ struct Player {
             jumpButtomReleased = true;
         }
     }
+
+    void BeginContact(b2Contact* contact) {
+
+        // Check body contact with exit
+        Entity* exit = 0;
+        Entity* player = 0;
+        Entity* leftWall = 0;
+        Entity* rightWall = 0;
+
+        b2BodyUserData data = contact->GetFixtureA()->GetBody()->GetUserData();
+        if (data.pointer != 0) {
+            Entity* b = (Entity*)data.pointer;
+            if (strcmp(b->name, "player") == 0) {
+                player = b;
+            }
+            else if (strcmp(b->name, "exit") == 0) {
+                exit = b;
+            }
+            else if (strcmp(b->name, "leftWall") == 0) {
+                leftWall = b;
+            }
+            else if (strcmp(b->name, "rightWall") == 0) {
+                rightWall = b;
+            }
+
+        }
+
+        data = contact->GetFixtureB()->GetBody()->GetUserData();
+        if (data.pointer != 0) {
+            Entity* b = (Entity*)data.pointer;
+            if (strcmp(b->name, "player") == 0) {
+                player = b;
+            }
+            else if (strcmp(b->name, "exit") == 0) {
+                exit = b;
+            }
+            else if (strcmp(b->name, "leftWall") == 0) {
+                leftWall = b;
+            }
+            else if (strcmp(b->name, "rightWall") == 0) {
+                rightWall = b;
+            }            
+        }
+        if (exit && player) {
+            exit->sfShape.setFillColor(Color::Black);
+        }
+
+        if (player && leftWall) {
+            float impulse = body->GetMass();
+            body->ApplyLinearImpulse( b2Vec2(impulse, 0), body->GetWorldCenter(), true);      
+            moveRight();
+            body->ApplyLinearImpulse( b2Vec2(0, -impulse*0.01), body->GetWorldCenter(), true);
+            return;
+        }
+        if (player && rightWall) {
+            
+            float impulse = body->GetMass();
+            body->ApplyLinearImpulse( b2Vec2(-2*impulse, -impulse*0.01), body->GetWorldCenter(), true);             
+            //moveLeft();
+            return;
+        }
+        if (player) {
+            jumpCount = 0;
+        }
+
+    }
+
+    void EndContact(b2Contact* contact) {
+        // Check foot sensor
+
+    }    
 };
 
 int main() {
@@ -317,19 +373,18 @@ int main() {
     ImGui::SFML::Init(app);
     Grid grid;
 
-    MyContactListener myContactListener;
-    world.SetContactListener(&myContactListener);
-
-    float wallWidth = W / 80;
-    Entity leftWall("lw", wallWidth, H / 1.3f, 0.0f + wallWidth * .5f, H / 2, Color::White); leftWall.build();
-    Entity rightWall("rw", wallWidth, H / 1.3f, W - wallWidth * .5f, H / 2, Color::White); rightWall.build();
-    Entity ground("ground", W, wallWidth, W / 2, H - wallWidth * .5f, Color::White); ground.build();
-    Entity p1("p1", W / 10, wallWidth, 2 * W / 10, 9 * H / 10, Color::White); p1.build();
-    Entity p2("p2", W / 10, wallWidth, 4 * W / 10, 8 * H / 10, Color::White); p2.build();
-    Entity p3("p3", W / 10, wallWidth, 6 * W / 10, 7 * H / 10, Color::White); p3.build();
-    Entity exit("exit", W / 30, W / 20, W / 3, 9.4 * H / 10, Color::Green); exit.build();
+    float wallThickness = W / 80;
+    Entity leftWall("leftWall", wallThickness, H / 1.3f, 0.0f + wallThickness * .5f, H / 2, Color::White); leftWall.build();
+    Entity rightWall("rightWall", wallThickness, H / 1.3f, W - wallThickness * .5f, H / 2, Color::White); rightWall.build();
+    Entity ground("ground", W, wallThickness, W / 2, H - wallThickness * .5f, Color::White); ground.build();
+    Entity p1("p1", W / 10, wallThickness, 2*W/10, 9 * H / 10, Color::White); p1.build();
+    Entity p2("p2", W / 10, wallThickness, 4*W/10, 8 * H / 10, Color::White); p2.build();
+    Entity p3("p3", W / 10, wallThickness, 6*W/10, 7 * H / 10, Color::White); p3.build();
+    Entity exit("exit", W / 30, W / 20, 6*W/10, 6.4 * H / 10, Color::Green); exit.build();
 
     Player player;
+    world.SetContactListener(&player);
+
     DynamicEntity redBox("redBox", W / 20, W / 20, W / 4, 0.0f, 1.0f, 0.1f, Color::Red); redBox.build();
     DynamicEntity blueBox("blueBox", W / 20, W / 20, 3 * W / 4, 0.0f, 5.0f, 5.0f, Color::Blue); blueBox.build();
 
@@ -345,12 +400,12 @@ int main() {
     Font myFont;
     if (!myFont.loadFromFile("sansation.ttf")) { return 1; }
     HelpTexts helpTexts(myFont);
-    helpTexts.add("[Escape] to exit", W/32, H/24);
-    helpTexts.add("[WASD] to move square", W/32, 2*H/24);
-    helpTexts.add("[P] - Pause   [O] - Single step", W/32, 3*H/24);
+    helpTexts.add("[Escape] to exit", W / 32, H / 24);
+    helpTexts.add("[WASD] to move square", W / 32, 2 * H / 24);
+    helpTexts.add("[P] - Pause   [O] - Single step", W / 32, 3 * H / 24);
 
     HelpTexts pausedText(myFont);
-    pausedText.add("PAUSED", W/2, H/2, 30, Color::Red);
+    pausedText.add("PAUSED", W / 2, H / 2, 30, Color::Red);
 
     float freq = 130.0f;
     float oneStepFreq = 2000.0f;
@@ -447,8 +502,6 @@ int main() {
             ImGui::SliderFloat("timeStep freq", &freq, 100.0f, 4000.0f, "%f");
             ImGui::SliderFloat("oneStep freq", &oneStepFreq, 2000.0f, 4000.0f, "%f");
 
-            ImGui::LabelText("posY - prevPosy", "%.10f %.10f", player.posY, player.prevPosY);
-
             b2Vec2 pos = player.body->GetPosition();
             ImGui::LabelText("Position", "(%f, %f)", PPM * pos.x, PPM * pos.y);
 
@@ -461,18 +514,18 @@ int main() {
 
             ImGui::End();
         }
+        app.clear();
 
         player.update();
         redBox.update();
         blueBox.update();
-
-        app.clear();
 
         if (paused) {
             pausedText.draw(app);
         }
         helpTexts.draw(app);
         entityList.draw(app);
+        player.draw(app);
 
         grid.draw(app);
         ImGui::SFML::Render(app);
